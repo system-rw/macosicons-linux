@@ -17,6 +17,16 @@ This utility bridges the gap for customization enthusiasts who want to seamlessl
 * **Desktop Integration:** Automatically updates your system's desktop entries (`.desktop` files).
 * **KDE Sync:** Forces a KDE system configuration cache rebuild (`kbuildsycoca`) so your new icons show up instantly without a system reboot.
 
+## 📸 Screenshots
+
+### GUI Interface (Clean View)
+Here is a detailed look at the utility's visual interface.
+![macOSicons GUI Interface](screenshots/gui-interface-clean.png")
+
+### In the Wild (KDE Desktop Integration)
+Here is how it looks fully integrated on a customized KDE Plasma desktop, showing the dynamic glass effect.
+![macOSicons KDE Integration](screenshots/gui-desktop-integration.jpg)
+
 ---
 
 ## 🚀 Installation
