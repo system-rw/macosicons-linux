@@ -1,0 +1,81 @@
+#!/bin/bash
+DOWNLOADS_DIR="$HOME/Downloads"
+TARGET_DIR="$HOME/Pictures/MacIcons"
+mkdir -p "$TARGET_DIR"
+
+PADDING_PERCENT="80%"      # Unused but kept for user reference
+
+# 1. Find all local .icns files in your Downloads folder
+cd "$DOWNLOADS_DIR" || exit
+ICNS_FILES=( *.icns )
+
+if [ ! -e "${ICNS_FILES[0]}" ]; then
+    echo "❌ No .icns files found in your Downloads folder!"
+    exit 1
+fi
+
+# 2. Choose which file to process
+echo "Select the downloaded .icns file you want to use:"
+ls -1t *.icns | fzf --height 40% --reverse > /tmp/selected_icns.txt
+SELECTED_ICNS=$(cat /tmp/selected_icns.txt)
+
+if [ -z "$SELECTED_ICNS" ]; then
+    echo "Cancelled."
+    exit 0
+fi
+
+# 3. Select the target application
+echo "🔍 Select the app you want to map this icon variant to:"
+find /usr/share/applications $HOME/.local/share/applications -name "*.desktop" 2>/dev/null | \
+    awk -F'/' '{print $NF}' | sort -u | fzf --height 50% --reverse > /tmp/selected_app.txt
+
+SELECTED_APP=$(cat /tmp/selected_app.txt)
+
+if [ -z "$SELECTED_APP" ]; then
+    echo "Cancelled."
+    exit 0
+fi
+
+# Clean app name for filename
+APP_CLEAN_NAME=$(basename "$SELECTED_APP" .desktop)
+PNG_OUTPUT="$TARGET_DIR/${APP_CLEAN_NAME}.png"
+
+# 4. Create an isolated workspace
+WORK_DIR=$(mktemp -d)
+cp "$DOWNLOADS_DIR/$SELECTED_ICNS" "$WORK_DIR/target.icns"
+cd "$WORK_DIR" || exit
+
+echo "🚀 Extracting image assets safely..."
+icns2png -x target.icns > /dev/null 2>&1
+
+# CRITICAL FIX: Explicitly look for the 1024x1024 or 512x512 master files first
+EXTRACTED_FILE=$(ls *1024x1024*.png *512x512*.png 2>/dev/null | head -n 1)
+
+# Fallback to largest file size if specific names aren't found
+if [ -z "$EXTRACTED_FILE" ]; then
+    EXTRACTED_FILE=$(ls -S *.png 2>/dev/null | head -n 1)
+fi
+
+if [ -f "$EXTRACTED_FILE" ]; then
+    echo "📐 Applying the icon..."
+    # Strip padding aggressively, fill standard canvas, center on clean background
+    magick "$EXTRACTED_FILE" -fuzz 10% -trim +repage -resize 512x512 -background none -gravity center -extent 512x512 "$PNG_OUTPUT"
+else
+    echo "❌ Extraction failed! Could not extract a valid PNG from this .icns file."
+    rm -rf "$WORK_DIR"
+    exit 1
+fi
+
+rm -rf "$WORK_DIR"
+echo "✅ Balanced high-res PNG saved as: $PNG_OUTPUT"
+
+# 5. Overwrite user local app config
+APP_PATH=$(find /usr/share/applications $HOME/.local/share/applications -name "$SELECTED_APP" | head -n 1)
+USER_APP_DIR="$HOME/.local/share/applications"
+mkdir -p "$USER_APP_DIR"
+cp "$APP_PATH" "$USER_APP_DIR/$SELECTED_APP"
+
+sed -i "s|^Icon=.*|Icon=$PNG_OUTPUT|" "$USER_APP_DIR/$SELECTED_APP"
+
+echo "🎉 Success! Custom icon fully assigned to $SELECTED_APP"
+kbuildsycoca6 2>/dev/null || kbuildsycoca5 2>/dev/null

@@ -1,0 +1,526 @@
+#!/bin/bash
+DOWNLOADS_DIR="$HOME/Downloads"
+TARGET_DIR="$HOME/Pictures/MacIcons"
+mkdir -p "$TARGET_DIR"
+
+# 1. UNIFIED PyQt6 WINDOW — file picker + app selector + preview in one
+DESKTOP_LIST=$(find /usr/share/applications $HOME/.local/share/applications -name "*.desktop" 2>/dev/null | sort -u)
+export DOWNLOADS_DIR
+export DESKTOP_LIST
+
+RESULT=$(python3 - <<'PYEOF'
+import sys, os, subprocess, tempfile, shutil
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
+    QListWidget, QListWidgetItem, QPushButton, QLabel, QSplitter,
+    QFrame, QGraphicsDropShadowEffect
+)
+from PyQt6.QtGui import QPixmap, QIcon, QColor, QPainter, QPainterPath, QLinearGradient
+from PyQt6.QtCore import Qt, QSize
+
+ICON_EXTENSIONS = {".icns", ".png", ".ico"}
+DOWNLOADS = os.environ.get("DOWNLOADS_DIR", os.path.expanduser("~/Downloads"))
+DESKTOP_LIST_RAW = [d for d in os.environ.get("DESKTOP_LIST", "").strip().split("\n") if d]
+
+
+def make_rounded_pixmap(pixmap, radius=18):
+    size = pixmap.size()
+    rounded = QPixmap(size)
+    rounded.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(rounded)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path = QPainterPath()
+    path.addRoundedRect(0, 0, size.width(), size.height(), radius, radius)
+    painter.setClipPath(path)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.end()
+    return rounded
+
+
+def extract_preview(file_path):
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == ".png":
+        return file_path
+    tmpdir = tempfile.mkdtemp()
+    try:
+        if ext == ".icns":
+            subprocess.run(["icns2png", "-x", file_path], cwd=tmpdir, capture_output=True, timeout=10)
+            candidates = sorted(
+                [f for f in os.listdir(tmpdir) if f.endswith(".png")],
+                key=lambda f: os.path.getsize(os.path.join(tmpdir, f)), reverse=True,
+            )
+            if candidates:
+                return os.path.join(tmpdir, candidates[0])
+        elif ext == ".ico":
+            out = os.path.join(tmpdir, "preview.png")
+            subprocess.run(["magick", file_path + "[-1]", "-resize", "256x256", out], capture_output=True, timeout=10)
+            if os.path.isfile(out):
+                return out
+    except Exception:
+        pass
+    shutil.rmtree(tmpdir, ignore_errors=True)
+    return None
+
+
+def parse_icon_name(desktop_file):
+    try:
+        with open(desktop_file, "r", errors="replace") as f:
+            for line in f:
+                if line.startswith("Icon="):
+                    val = line.strip().split("=", 1)[1].strip()
+                    if not val or val.startswith(("http://", "https://", "ftp://", "data:")):
+                        return None
+                    if "?" in val or "#" in val:
+                        return None
+                    return val
+    except Exception:
+        pass
+    return None
+
+
+def resolve_icon(icon_name):
+    if not icon_name:
+        return None
+    if os.path.isabs(icon_name):
+        if os.path.isfile(icon_name):
+            pix = QPixmap(icon_name)
+            if not pix.isNull():
+                return pix.scaled(28, 28, Qt.AspectRatioMode.KeepAspectRatio,
+                                  Qt.TransformationMode.SmoothTransformation)
+        return None
+    if any(c in icon_name for c in "/?#<>:\"|*"):
+        return None
+    from PyQt6.QtGui import QIcon
+    theme_icon = QIcon.fromTheme(icon_name)
+    if not theme_icon.isNull():
+        pix = theme_icon.pixmap(28, 28)
+        if not pix.isNull():
+            return pix
+    home_icons = os.path.expanduser("~/.local/share/icons")
+    for base in (home_icons, "/usr/share/icons", "/usr/share/pixmaps"):
+        for theme in ("hicolor", "breeze", "Papirus", "Numix", "Adwaita"):
+            for size in ("48x48", "64x64", "256x256", "scalable"):
+                for ext in (".png", ".svg", ".xpm"):
+                    candidate = os.path.join(base, theme, size, "apps", icon_name + ext)
+                    if os.path.isfile(candidate):
+                        pix = QPixmap(candidate)
+                        if not pix.isNull():
+                            return pix.scaled(28, 28, Qt.AspectRatioMode.KeepAspectRatio,
+                                              Qt.TransformationMode.SmoothTransformation)
+    return None
+
+
+def build_stylesheet():
+    pal = QApplication.palette()
+    wc = pal.color(pal.ColorRole.Window)
+    tc = pal.color(pal.ColorRole.WindowText)
+    ac = pal.color(pal.ColorRole.Highlight)
+    lum = 0.299 * wc.redF() + 0.587 * wc.greenF() + 0.114 * wc.blueF()
+    dark = lum < 0.5
+    # liquidglass color tokens
+    # Card surfaces: white@10% (dark) / black@8% (light)
+    card_hov = "rgba(255,255,255,0.17)" if dark else "rgba(0,0,0,0.14)"
+    card_prs = "rgba(255,255,255,0.22)" if dark else "rgba(0,0,0,0.20)"
+    # Separators
+    sep = "rgba(84,84,88,0.60)" if dark else "rgba(60,60,67,0.21)"
+    # Labels
+    lbl2 = "#ebebf5" if dark else "#3c3c43"
+    lbl3 = "rgba(235,235,245,0.60)" if dark else "rgba(60,60,67,0.30)"
+    # Accent
+    ar = f"rgb({ac.red()}, {ac.green()}, {ac.blue()})"
+    al = f"rgba({ac.red()}, {ac.green()}, {ac.blue()}, 0.6)"
+    ab = f"rgba({ac.red()}, {ac.green()}, {ac.blue()}, 0.25)"
+    abd = f"rgba({ac.red()}, {ac.green()}, {ac.blue()}, 0.35)"
+    ah = ac.lighter(115)
+    ap = ac.darker(115)
+    ht = pal.color(pal.ColorRole.HighlightedText).name()
+    fn = QApplication.font().family()
+    return f"""
+        QWidget#CombinedWindow {{ background: transparent; }}
+        QWidget {{ background: transparent; color: {tc.name()}; font-family: "{fn}","sans-serif"; font-size: 13px; }}
+        #titleLabel {{ background: transparent; padding: 10px 22px 2px 22px; font-size: 13px; font-weight: 600; color: {lbl2}; letter-spacing: 0.4px; }}
+        #leftPanel {{ background: transparent; border-right: 1px solid {sep}; }}
+        #rightPanel {{ background: transparent; }}
+        #previewContainer {{ background: transparent; border: 1px solid rgba(255,255,255,0.10); border-radius: 20px; }}
+        #previewLabel {{ background: transparent; border: none; }}
+        #infoLabel {{ background: transparent; font-size: 12px; font-weight: 600; color: {tc.name()}; margin-top: 6px; }}
+        #metaLabel {{ background: transparent; font-size: 11px; color: {lbl3}; font-weight: 400; }}
+        #sectionLabel {{ background: transparent; font-size: 11px; font-weight: 600; color: {lbl3}; padding: 4px 6px 2px 6px; }}
+        QLineEdit {{ background: transparent; border: 1px solid {sep}; border-radius: 10px; color: {tc.name()}; padding: 10px 14px; font-size: 13px; selection-background-color: {ar}; }}
+        QLineEdit:focus {{ border: 1.5px solid {al}; }}
+        QListWidget {{ background: transparent; border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 4px; outline: 0; }}
+        QListWidget::item {{ padding: 8px 10px; border-radius: 8px; color: {tc.name()}; margin-bottom: 1px; min-height: 20px; }}
+        QListWidget::item:hover {{ background: {card_hov}; }}
+        QListWidget::item:selected {{ background: {ab}; border: 1px solid {abd}; font-weight: 600; }}
+        QPushButton {{ background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; color: {tc.name()}; font-size: 13px; font-weight: 600; padding: 10px 24px; }}
+        QPushButton:hover {{ background: {card_hov}; }}
+        QPushButton:pressed {{ background: {card_prs}; }}
+        #selectBtn {{ background: {ar}; border: none; color: {ht}; }}
+        #selectBtn:hover {{ background: rgb({ah.red()},{ah.green()},{ah.blue()}); }}
+        #selectBtn:pressed {{ background: rgb({ap.red()},{ap.green()},{ap.blue()}); }}
+        QSplitter::handle {{ background: {sep}; width: 1px; }}
+        QScrollBar:vertical {{ border: none; background: transparent; width: 7px; margin: 4px 2px 4px 0; }}
+        QScrollBar::handle:vertical {{ background: rgba(255,255,255,0.12); min-height: 30px; border-radius: 3px; }}
+        QScrollBar::handle:vertical:hover {{ background: rgba(255,255,255,0.25); }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ border: none; background: none; height: 0px; }}
+    """
+    
+class CombinedWindow(QWidget):
+    def __init__(self, icon_files, app_data):
+        super().__init__()
+        self.icon_files = icon_files
+        self.app_data = app_data
+        self.selected_file = None
+        self.selected_app = None
+        self._preview_tmpdir = None
+        self.initUI()
+
+    def initUI(self):
+        self.setObjectName("CombinedWindow")
+        self.setWindowTitle("macOSicons")
+        self.resize(860, 600)
+        self.setMinimumSize(740, 500)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        title = QLabel("Map Icon to Application")
+        title.setObjectName("titleLabel")
+        root.addWidget(title)
+        root.addSpacing(2)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        # ── Left: file list (top) + app list (bottom) ────────────────
+        left = QFrame()
+        left.setObjectName("leftPanel")
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(14, 10, 14, 14)
+        ll.setSpacing(4)
+
+        lbl = QLabel("Icon Files")
+        lbl.setObjectName("sectionLabel")
+        ll.addWidget(lbl)
+
+        self.file_search = QLineEdit()
+        self.file_search.setPlaceholderText("Search icon files...")
+        self.file_search.textChanged.connect(self._filter_files)
+        ll.addWidget(self.file_search)
+
+        self.file_list = QListWidget()
+        self.file_list.setIconSize(QSize(28, 28))
+        self.file_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.file_list.currentItemChanged.connect(self._on_file_select)
+        for fp in self.icon_files:
+            item = QListWidgetItem(os.path.basename(fp))
+            item.setData(Qt.ItemDataRole.UserRole, fp)
+            ext = os.path.splitext(fp)[1].lower()
+            if ext == ".png":
+                pix = QPixmap(fp)
+                if not pix.isNull():
+                    item.setIcon(QIcon(pix.scaled(28, 28, Qt.AspectRatioMode.KeepAspectRatio,
+                                                   Qt.TransformationMode.SmoothTransformation)))
+            else:
+                ti = QIcon.fromTheme("image-x-generic")
+                if not ti.isNull():
+                    item.setIcon(QIcon(ti.pixmap(28, 28)))
+            self.file_list.addItem(item)
+        ll.addWidget(self.file_list, stretch=1)
+
+        lbl2 = QLabel("Applications")
+        lbl2.setObjectName("sectionLabel")
+        ll.addWidget(lbl2)
+
+        self.app_search = QLineEdit()
+        self.app_search.setPlaceholderText("Search applications...")
+        self.app_search.textChanged.connect(self._filter_apps)
+        ll.addWidget(self.app_search)
+
+        self.app_list = QListWidget()
+        self.app_list.setIconSize(QSize(28, 28))
+        self.app_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        for desktop_name, icon_name in self.app_data:
+            item = QListWidgetItem(desktop_name)
+            pix = resolve_icon(icon_name)
+            if pix:
+                item.setIcon(QIcon(pix))
+            self.app_list.addItem(item)
+        ll.addWidget(self.app_list, stretch=1)
+
+        splitter.addWidget(left)
+
+        # ── Right: preview + buttons ─────────────────────────────────
+        right = QFrame()
+        right.setObjectName("rightPanel")
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(14, 14, 14, 14)
+        rl.setSpacing(10)
+
+        container = QFrame()
+        container.setObjectName("previewContainer")
+        pc = QVBoxLayout(container)
+        pc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pc.setContentsMargins(12, 12, 12, 12)
+        self.preview_label = QLabel()
+        self.preview_label.setObjectName("previewLabel")
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.setMinimumSize(160, 160)
+        self.preview_label.setMaximumSize(220, 220)
+        self.preview_label.setText("Select an icon")
+        pc.addWidget(self.preview_label)
+        rl.addWidget(container, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        self.info_label = QLabel()
+        self.info_label.setObjectName("infoLabel")
+        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.info_label.setWordWrap(True)
+        rl.addWidget(self.info_label)
+
+        self.meta_label = QLabel()
+        self.meta_label.setObjectName("metaLabel")
+        self.meta_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rl.addWidget(self.meta_label)
+
+        rl.addStretch(1)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.close)
+        self.select_btn = QPushButton("Map Icon")
+        self.select_btn.setObjectName("selectBtn")
+        self.select_btn.clicked.connect(self._accept)
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(self.select_btn)
+        rl.addLayout(btn_row)
+
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(40)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 80))
+        right.setGraphicsEffect(shadow)
+
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([420, 340])
+
+        root.addWidget(splitter, stretch=1)
+
+        if self.file_list.count() > 0:
+            self.file_list.setCurrentRow(0)
+
+        self.file_search.setFocus()
+        self.setStyleSheet(build_stylesheet())
+
+    def _on_file_select(self, current, previous):
+        if not current:
+            return
+        fp = current.data(Qt.ItemDataRole.UserRole)
+        if not fp or not os.path.isfile(fp):
+            return
+        if self._preview_tmpdir:
+            shutil.rmtree(self._preview_tmpdir, ignore_errors=True)
+            self._preview_tmpdir = None
+        self.info_label.setText(os.path.basename(fp))
+        size = os.path.getsize(fp)
+        self.meta_label.setText(f"{size / 1024:.0f} KB" if size < 1048576 else f"{size / 1048576:.1f} MB")
+        preview = extract_preview(fp)
+        if preview:
+            pix = QPixmap(preview)
+            if not pix.isNull():
+                scaled = pix.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio,
+                                    Qt.TransformationMode.SmoothTransformation)
+                self.preview_label.setPixmap(make_rounded_pixmap(scaled, radius=22))
+                self._preview_tmpdir = os.path.dirname(preview)
+                if self._preview_tmpdir == os.path.dirname(fp):
+                    self._preview_tmpdir = None
+        else:
+            self.preview_label.setText("No preview")
+
+    def _filter_files(self, text):
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            item.setHidden(text.lower() not in item.text().lower())
+
+    def _filter_apps(self, text):
+        for i in range(self.app_list.count()):
+            item = self.app_list.item(i)
+            item.setHidden(text.lower() not in item.text().lower())
+
+    def _accept(self):
+        fi = self.file_list.currentItem()
+        ai = self.app_list.currentItem()
+        if fi and ai:
+            self.selected_file = fi.data(Qt.ItemDataRole.UserRole)
+            self.selected_app = ai.text()
+            self.close()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        r = 20
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, w, h, r, r)
+        p.setClipPath(path)
+        pal = self.palette()
+        wc = pal.color(pal.ColorRole.Window)
+        lum = 0.299 * wc.redF() + 0.587 * wc.greenF() + 0.114 * wc.blueF()
+        if lum < 0.5:
+            tint = QColor(0, 0, 0, 35)
+            spec_top = QColor(255, 255, 255, 10)
+        else:
+            tint = QColor(255, 255, 255, 50)
+            spec_top = QColor(255, 255, 255, 12)
+        p.fillRect(0, 0, w, h, tint)
+        spec = QLinearGradient(0, 0, 0, min(30, h // 4))
+        spec.setColorAt(0, spec_top)
+        spec.setColorAt(1, QColor(0, 0, 0, 0))
+        p.fillRect(0, 0, w, min(30, h // 4), spec)
+        p.end()
+
+    def closeEvent(self, event):
+        if self._preview_tmpdir:
+            shutil.rmtree(self._preview_tmpdir, ignore_errors=True)
+        super().closeEvent(event)
+
+
+# ── Scan + run ─────────────────────────────────────────────────────────
+icon_files = []
+if os.path.isdir(DOWNLOADS):
+    for f in sorted(os.listdir(DOWNLOADS)):
+        if os.path.splitext(f)[1].lower() in ICON_EXTENSIONS:
+            icon_files.append(os.path.join(DOWNLOADS, f))
+
+app_data = []
+for dp in DESKTOP_LIST_RAW:
+    name = os.path.basename(dp)
+    icon_name = parse_icon_name(dp)
+    app_data.append((name, icon_name))
+
+if not icon_files:
+    sys.exit(1)
+
+# Make sure there are absolutely NO spaces before these lines:
+app = QApplication([])
+app.setDesktopFileName("macosicons-gui")
+win = CombinedWindow(icon_files, app_data)
+win.show()
+app.exec()
+
+if win.selected_file and win.selected_app:
+    print(win.selected_file)
+    print(win.selected_app)
+else:
+    sys.exit(1)
+PYEOF
+)
+
+# Exit if cancelled
+if [ $? -ne 0 ] || [ -z "$RESULT" ]; then
+    echo "Cancelled."
+    exit 0
+fi
+
+SELECTED_ICON_PATH=$(echo "$RESULT" | sed -n '1p')
+SELECTED_APP=$(echo "$RESULT" | sed -n '2p')
+
+if [ -z "$SELECTED_ICON_PATH" ] || [ -z "$SELECTED_APP" ]; then
+    echo "Cancelled."
+    exit 0
+fi
+
+# 2. Clean app name for filename
+APP_CLEAN_NAME=$(basename "$SELECTED_APP" .desktop)
+PNG_OUTPUT="$TARGET_DIR/${APP_CLEAN_NAME}.png"
+
+# 3. Safe cleanup — only deletes if path is under /tmp, always cd HOME first
+safe_cleanup() {
+    local dir="$1"
+    case "$dir" in
+        /tmp/*)
+            cd "$HOME" 2>/dev/null || true
+            rm -rf "$dir"
+            ;;
+        *)
+            echo "Refusing to remove $dir — not in /tmp" >&2
+            ;;
+    esac
+}
+
+# 4. Create isolated workspace (never cd into it)
+WORK_DIR=$(mktemp -d)
+cp "$SELECTED_ICON_PATH" "$WORK_DIR/source_file"
+
+# 5. Extract / convert to PNG based on file type — all paths absolute
+FILE_EXT="${SELECTED_ICON_PATH##*.}"
+FILE_EXT=$(echo "$FILE_EXT" | tr '[:upper:]' '[:lower:]')
+
+case "$FILE_EXT" in
+    icns)
+        (cd "$WORK_DIR" && icns2png -x source_file) > /dev/null 2>&1
+        EXTRACTED_FILE=$(find "$WORK_DIR" -maxdepth 1 \( -name '*1024x1024*.png' -o -name '*512x512*.png' \) 2>/dev/null | head -n 1)
+        if [ -z "$EXTRACTED_FILE" ]; then
+            EXTRACTED_FILE=$(ls -S "$WORK_DIR"/*.png 2>/dev/null | head -n 1)
+        fi
+        if [ -f "$EXTRACTED_FILE" ]; then
+            magick "$EXTRACTED_FILE" -fuzz 10% -trim +repage -resize 512x512 -background none -gravity center -extent 512x512 "$PNG_OUTPUT"
+        else
+            kdialog --title "Error" --error "Could not extract a valid PNG from this .icns file."
+            safe_cleanup "$WORK_DIR"
+            exit 1
+        fi
+        ;;
+    ico)
+        magick "$WORK_DIR/source_file[-1]" -fuzz 10% -trim +repage -resize 512x512 -background none -gravity center -extent 512x512 "$PNG_OUTPUT" 2>/dev/null
+        if [ ! -f "$PNG_OUTPUT" ]; then
+            kdialog --title "Error" --error "Could not extract a valid PNG from this .ico file."
+            safe_cleanup "$WORK_DIR"
+            exit 1
+        fi
+        ;;
+    png)
+        magick "$WORK_DIR/source_file" -fuzz 10% -trim +repage -resize 512x512 -background none -gravity center -extent 512x512 "$PNG_OUTPUT" 2>/dev/null
+        if [ ! -f "$PNG_OUTPUT" ]; then
+            kdialog --title "Error" --error "Could not process this PNG file."
+            safe_cleanup "$WORK_DIR"
+            exit 1
+        fi
+        ;;
+    *)
+        kdialog --title "Error" --error "Unsupported file type: .$FILE_EXT"
+        safe_cleanup "$WORK_DIR"
+        exit 1
+        ;;
+esac
+
+safe_cleanup "$WORK_DIR"
+
+# 6. Overwrite user local app config
+APP_PATH=$(find /usr/share/applications $HOME/.local/share/applications -name "$SELECTED_APP" | head -n 1)
+USER_APP_DIR="$HOME/.local/share/applications"
+mkdir -p "$USER_APP_DIR"
+cp "$APP_PATH" "$USER_APP_DIR/$SELECTED_APP"
+
+sed -i "s|^Icon=.*|Icon=$PNG_OUTPUT|" "$USER_APP_DIR/$SELECTED_APP"
+
+# Notify user of success using native KDE notification bubble
+kdialog --title "Success!" --passivepopup "Custom icon successfully mapped to $SELECTED_APP" 3
+
+# Force refresh everything instantly
+kbuildsycoca6 2>/dev/null || kbuildsycoca5 2>/dev/null
+gtk-update-icon-cache -f -t ~/.icons 2>/dev/null
+gtk-update-icon-cache -f -t ~/.local/share/icons 2>/dev/null
+
+qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+    var desktops = desktops();
+    for (var i = 0; i < desktops.length; i++) {
+        desktops[i].currentConfigGroup = new Array('General');
+        desktops[i].reloadConfig();
+    }
+" 2>/dev/null
