@@ -1,68 +1,44 @@
-# 🍏 macOSicons-linux
+# macOSicons Companion v2.0
 
-> **Automatically map custom macOS (`.icns` / `.png`) icons to Linux desktop launchers. Designed for KDE Plasma, featuring a terminal-based CLI and a Tahoe-styled GUI.**
+macOSicons Companion is a professional-grade utility designed to map custom icons to your Linux application launchers (.desktop files) with the look and feel of macOS.
 
-This utility bridges the gap for customization enthusiasts who want to seamlessly apply custom macOS icons to their Linux applications. No manual extraction, scaling, or desktop entry editing required.
+## 🚀 Features
 
-***
+* **Settings Dashboard**: A centralized UI to manage themes, glass effects, and backup preferences.
+* **Terminal & GUI Launchers**: Comes with dedicated .desktop files for both versions. One launches the interactive tool inside your terminal, and the other opens the standalone GUI.
+* **Smart Format Support**: Handles raw PNGs, ICOs, and ICNS files, mapping them cleanly to your applications.
+* **Desktop Integration**: Automatically updates your system's desktop entries (.desktop files) to ensure correct icon application.
+* **KDE Sync**: Forces a KDE system configuration cache rebuild (kbuildsycoca) so your new icons show up instantly without a system reboot.
+* **Automated Safety**: Timestamped backups of all .desktop files are created automatically before any changes are made.
+* **One-Click Restore**: Easily roll back to any previous backup state directly from the Settings tab.
+* **Glassmorphic Design**: A beautiful, adaptive interface with configurable transparency and theme options.
+* **Persistent Config**: All settings are saved automatically via QSettings (~/.config/macOSicons/macOSicons.conf), shared seamlessly between the CLI and GUI.
 
-⚠️ **Disclaimer:** This is an independent, solo project developed by a single developer. It is **not** affiliated with, endorsed by, or working with the official [macosicons.com](https://macosicons.com) website or its creators. 
+## 🛠️ Installation
 
-***
+Ensure you have the required dependencies installed, which is added to the install script. But in case it didn't work try to install: python3 python3-pyqt6 icnsutils imagemagick kdialog.  With your system's package manager
 
-## ✨ Features
-
-* **Terminal & GUI Launchers:** Comes with dedicated `.desktop` files for both versions. One launches the interactive tool inside your terminal, and the other opens the standalone GUI.
-* **Smart Format Support:** Handles raw PNGs and maps them cleanly.
-* **Desktop Integration:** Automatically updates your system's desktop entries (`.desktop` files).
-* **KDE Sync:** Forces a KDE system configuration cache rebuild (`kbuildsycoca`) so your new icons show up instantly without a system reboot.
-
-## 📸 Screenshots
-
-### GUI Interface (Clean View)
-![macOSicons GUI Interface](screenshots/gui-interface-clean.png)
-### In the Wild (KDE Desktop Integration)
-![macOSicons KDE Integration](screenshots/gui-desktop-integration.png)
-
----
-
-## 🚀 Installation
-
-Getting set up is incredibly simple. Just clone the repository and run the automated installer:
+Then, run:
 
 ```bash
-# Clone the repository
-git clone https://github.com/system-rw/macosicons-linux.git
-cd macosicons-linux
-
-# Run the installer
 ./install.sh
 ```
 
----
+## 💻 Usage
 
-## 🛠️ Usage
-
-🖥️ Desktop Launchers (Recommended):
-Once installed, you can launch both versions directly from your application menu (under Settings/System):
-
-Terminal Version (macOSicons): Launch it to open a terminal tab running the interactive CLI tool to guide you through mapping.
-
-GUI Version (macOSicons (GUI)): Launch it to open a dedicated, custom-styled window to visually browse and apply your icons.
-
-🐚 Command Line (Bash):
-If you prefer using the terminal directly, you can run the scripts from anywhere after installation:
-
-To run the interactive CLI tool:
+### Graphical Interface (GUI)
 
 ```bash
-apply-mac-icon
+~/.local/bin/apply-mac-icon-gui
 ```
-To run the GUI tool:
+
+### Command Line Interface (CLI)
 
 ```bash
-apply-mac-icon-gui
+apply-mac-icon --help
 ```
 
-## 📜 License
-This project is licensed under the MIT License - see the LICENSE file for details.
+## 🛡️ Safety & Configuration
+
+* **Backups**: Located at ~/.local/share/macosicons/backups/
+* **Persistence**: Config file located at ~/.config/macOSicons/macOSicons.conf

@@ -2,7 +2,7 @@
 Categories=Utility;
 Comment=Apply macOS icons to Linux applications
 Exec=apply-mac-icon
-Icon=macOSicons
+Icon=macosicons
 Name=macOSicons
 NoDisplay=false
 Path=

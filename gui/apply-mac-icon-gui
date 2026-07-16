@@ -13,13 +13,13 @@ import sys, os, subprocess, tempfile, shutil
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QPushButton, QLabel, QSplitter,
-    QFrame, QGraphicsDropShadowEffect
+    QFrame, QGraphicsDropShadowEffect, QTabWidget, QCheckBox,
+    QComboBox, QFileDialog, QRadioButton, QButtonGroup,
 )
 from PyQt6.QtGui import QPixmap, QIcon, QColor, QPainter, QPainterPath, QLinearGradient
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QSettings, QTimer
 
-ICON_EXTENSIONS = {".icns", ".png", ".ico"}
-DOWNLOADS = os.environ.get("DOWNLOADS_DIR", os.path.expanduser("~/Downloads"))
+ICON_EXTENSIONS = {".icns", ".png"}
 DESKTOP_LIST_RAW = [d for d in os.environ.get("DESKTOP_LIST", "").strip().split("\n") if d]
 
 
@@ -51,11 +51,6 @@ def extract_preview(file_path):
             )
             if candidates:
                 return os.path.join(tmpdir, candidates[0])
-        elif ext == ".ico":
-            out = os.path.join(tmpdir, "preview.png")
-            subprocess.run(["magick", file_path + "[-1]", "-resize", "256x256", out], capture_output=True, timeout=10)
-            if os.path.isfile(out):
-                return out
     except Exception:
         pass
     shutil.rmtree(tmpdir, ignore_errors=True)
@@ -110,64 +105,114 @@ def resolve_icon(icon_name):
     return None
 
 
-def build_stylesheet():
+# ── Stylesheet ───────────────────────────────────────────────────────────
+def build_stylesheet(dark_mode=None, glass_enabled=True):
     pal = QApplication.palette()
-    wc = pal.color(pal.ColorRole.Window)
-    tc = pal.color(pal.ColorRole.WindowText)
+    if dark_mode is None:
+        wc = pal.color(pal.ColorRole.Window)
+        lum = 0.299 * wc.redF() + 0.587 * wc.greenF() + 0.114 * wc.blueF()
+        dark = lum < 0.5
+    else:
+        dark = dark_mode
+
     ac = pal.color(pal.ColorRole.Highlight)
-    lum = 0.299 * wc.redF() + 0.587 * wc.greenF() + 0.114 * wc.blueF()
-    dark = lum < 0.5
-    # liquidglass color tokens
-    # Card surfaces: white@10% (dark) / black@8% (light)
-    card_hov = "rgba(255,255,255,0.17)" if dark else "rgba(0,0,0,0.14)"
-    card_prs = "rgba(255,255,255,0.22)" if dark else "rgba(0,0,0,0.20)"
-    # Separators
-    sep = "rgba(84,84,88,0.60)" if dark else "rgba(60,60,67,0.21)"
-    # Labels
-    lbl2 = "#ebebf5" if dark else "#3c3c43"
-    lbl3 = "rgba(235,235,245,0.60)" if dark else "rgba(60,60,67,0.30)"
-    # Accent
+
+    if dark:
+        tc_name = "#ffffff"
+        card_hov = "rgba(255,255,255,0.17)"
+        card_prs = "rgba(255,255,255,0.22)"
+        sep = "rgba(84,84,88,0.60)"
+        lbl2 = "#ebebf5"
+        lbl3 = "rgba(235,235,245,0.60)"
+        win_solid = "rgb(28,28,30)"
+        tab_hov = "rgba(255,255,255,0.06)"
+        card_bg = "rgba(255,255,255,0.05)"
+        card_bd = "rgba(255,255,255,0.08)"
+        scroll_h = "rgba(255,255,255,0.12)"
+        scroll_hv = "rgba(255,255,255,0.25)"
+        qss = "QComboBox QAbstractItemView { background: rgb(28,28,30); }"
+    else:
+        tc_name = "#1c1c1e"
+        card_hov = "rgba(0,0,0,0.14)"
+        card_prs = "rgba(0,0,0,0.20)"
+        sep = "rgba(60,60,67,0.21)"
+        lbl2 = "#3c3c43"
+        lbl3 = "rgba(60,60,67,0.30)"
+        win_solid = "rgb(242,242,247)"
+        tab_hov = "rgba(0,0,0,0.04)"
+        card_bg = "rgba(0,0,0,0.04)"
+        card_bd = "rgba(0,0,0,0.06)"
+        scroll_h = "rgba(0,0,0,0.12)"
+        scroll_hv = "rgba(0,0,0,0.25)"
+        qss = "QComboBox QAbstractItemView { background: rgb(242,242,247); }"
+
     ar = f"rgb({ac.red()}, {ac.green()}, {ac.blue()})"
     al = f"rgba({ac.red()}, {ac.green()}, {ac.blue()}, 0.6)"
     ab = f"rgba({ac.red()}, {ac.green()}, {ac.blue()}, 0.25)"
     abd = f"rgba({ac.red()}, {ac.green()}, {ac.blue()}, 0.35)"
     ah = ac.lighter(115)
     ap = ac.darker(115)
-    ht = pal.color(pal.ColorRole.HighlightedText).name()
+    ht = "#ffffff"
     fn = QApplication.font().family()
+    win_bg = "transparent" if glass_enabled else win_solid
+
     return f"""
-        QWidget#CombinedWindow {{ background: transparent; }}
-        QWidget {{ background: transparent; color: {tc.name()}; font-family: "{fn}","sans-serif"; font-size: 13px; }}
+        QWidget#CombinedWindow {{ background: {win_bg}; }}
+        QWidget {{ background: transparent; color: {tc_name}; font-family: "{fn}","sans-serif"; font-size: 13px; }}
         #titleLabel {{ background: transparent; padding: 10px 22px 2px 22px; font-size: 13px; font-weight: 600; color: {lbl2}; letter-spacing: 0.4px; }}
         #leftPanel {{ background: transparent; border-right: 1px solid {sep}; }}
         #rightPanel {{ background: transparent; }}
-        #previewContainer {{ background: transparent; border: 1px solid rgba(255,255,255,0.10); border-radius: 20px; }}
+        #previewContainer {{ background: transparent; border: 1px solid {card_bd}; border-radius: 20px; }}
         #previewLabel {{ background: transparent; border: none; }}
-        #infoLabel {{ background: transparent; font-size: 12px; font-weight: 600; color: {tc.name()}; margin-top: 6px; }}
+        #infoLabel {{ background: transparent; font-size: 12px; font-weight: 600; color: {tc_name}; margin-top: 6px; }}
         #metaLabel {{ background: transparent; font-size: 11px; color: {lbl3}; font-weight: 400; }}
         #sectionLabel {{ background: transparent; font-size: 11px; font-weight: 600; color: {lbl3}; padding: 4px 6px 2px 6px; }}
-        QLineEdit {{ background: transparent; border: 1px solid {sep}; border-radius: 10px; color: {tc.name()}; padding: 10px 14px; font-size: 13px; selection-background-color: {ar}; }}
+        QLineEdit {{ background: transparent; border: 1px solid {sep}; border-radius: 10px; color: {tc_name}; padding: 10px 14px; font-size: 13px; selection-background-color: {ar}; }}
         QLineEdit:focus {{ border: 1.5px solid {al}; }}
-        QListWidget {{ background: transparent; border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 4px; outline: 0; }}
-        QListWidget::item {{ padding: 8px 10px; border-radius: 8px; color: {tc.name()}; margin-bottom: 1px; min-height: 20px; }}
+        QListWidget {{ background: transparent; border: 1px solid {card_bd}; border-radius: 12px; padding: 4px; outline: 0; }}
+        QListWidget::item {{ padding: 8px 10px; border-radius: 8px; color: {tc_name}; margin-bottom: 1px; min-height: 20px; }}
         QListWidget::item:hover {{ background: {card_hov}; }}
         QListWidget::item:selected {{ background: {ab}; border: 1px solid {abd}; font-weight: 600; }}
-        QPushButton {{ background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; color: {tc.name()}; font-size: 13px; font-weight: 600; padding: 10px 24px; }}
+        QPushButton {{ background: {card_bg}; border: 1px solid {card_bd}; border-radius: 10px; color: {tc_name}; font-size: 13px; font-weight: 600; padding: 10px 24px; min-height: 20px; }}
         QPushButton:hover {{ background: {card_hov}; }}
         QPushButton:pressed {{ background: {card_prs}; }}
+        #smallBtn {{ padding: 6px 14px; min-height: 20px; min-width: 60px; }}
         #selectBtn {{ background: {ar}; border: none; color: {ht}; }}
         #selectBtn:hover {{ background: rgb({ah.red()},{ah.green()},{ah.blue()}); }}
         #selectBtn:pressed {{ background: rgb({ap.red()},{ap.green()},{ap.blue()}); }}
         QSplitter::handle {{ background: {sep}; width: 1px; }}
         QScrollBar:vertical {{ border: none; background: transparent; width: 7px; margin: 4px 2px 4px 0; }}
-        QScrollBar::handle:vertical {{ background: rgba(255,255,255,0.12); min-height: 30px; border-radius: 3px; }}
-        QScrollBar::handle:vertical:hover {{ background: rgba(255,255,255,0.25); }}
+        QScrollBar::handle:vertical {{ background: {scroll_h}; min-height: 30px; border-radius: 3px; }}
+        QScrollBar::handle:vertical:hover {{ background: {scroll_hv}; }}
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ border: none; background: none; height: 0px; }}
+        QTabWidget::pane {{ border: none; background: transparent; }}
+        QTabBar {{ background: transparent; }}
+        QTabBar::tab {{ background: transparent; color: {lbl3}; padding: 8px 20px; border: none; font-weight: 500; border-bottom: 2px solid transparent; }}
+        QTabBar::tab:selected {{ color: {tc_name}; border-bottom: 2px solid {ar}; }}
+        QTabBar::tab:hover {{ background: {tab_hov}; color: {tc_name}; }}
+        #settingsCard {{ background: {card_bg}; border: 1px solid {card_bd}; border-radius: 12px; }}
+        #settingsSection {{ background: transparent; font-size: 11px; font-weight: 600; color: {lbl3}; padding: 0px 0px 4px 0px; }}
+        #settingsLabel {{ background: transparent; font-size: 13px; color: {tc_name}; padding: 0px; }}
+        #settingsHint {{ background: transparent; font-size: 11px; color: {lbl3}; padding: 0px; }}
+        #refreshStatus {{ background: transparent; font-size: 12px; color: {ar}; font-weight: 600; padding: 0px; }}
+        QCheckBox {{ spacing: 8px; color: {tc_name}; background: transparent; }}
+        QCheckBox::indicator {{ width: 36px; height: 20px; border-radius: 10px; background: rgba(120,120,128,0.4); border: none; }}
+        QCheckBox::indicator:checked {{ background: {ar}; }}
+        QRadioButton {{ spacing: 8px; color: {tc_name}; background: transparent; }}
+        QRadioButton::indicator {{ width: 16px; height: 16px; border-radius: 8px; border: 2px solid {sep}; background: transparent; }}
+        QRadioButton::indicator:checked {{ background: {ar}; border: 2px solid {ar}; }}
+        QComboBox {{ background: transparent; border: 1px solid {sep}; border-radius: 8px; color: {tc_name}; padding: 6px 12px; min-width: 100px; }}
+        QComboBox::drop-down {{ border: none; width: 24px; }}
+        QComboBox::down-arrow {{ image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid {tc_name}; margin-right: 8px; }}
+        {qss}
     """
-    
+
+
+# ── Main Window ──────────────────────────────────────────────────────────
 class CombinedWindow(QWidget):
     def __init__(self, icon_files, app_data):
         super().__init__()
+        self.settings = QSettings("macOSicons", "macOSicons")
         self.icon_files = icon_files
         self.app_data = app_data
         self.selected_file = None
@@ -178,23 +223,43 @@ class CombinedWindow(QWidget):
     def initUI(self):
         self.setObjectName("CombinedWindow")
         self.setWindowTitle("macOSicons")
-        self.resize(860, 600)
-        self.setMinimumSize(740, 500)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.resize(860, 773)
+        self.setMinimumSize(740, 773)
+
+        if self.settings.value("appearance/glass", True, type=bool):
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        title = QLabel("Map Icon to Application")
+        title = QLabel("macOSicons")
         title.setObjectName("titleLabel")
         root.addWidget(title)
-        root.addSpacing(2)
+
+        tabs = QTabWidget()
+        tabs.setObjectName("mainTabs")
+
+        map_w = QWidget()
+        self._build_map_tab(map_w)
+        tabs.addTab(map_w, "  Map  ")
+
+        settings_w = QWidget()
+        self._build_settings_tab(settings_w)
+        tabs.addTab(settings_w, "  Settings  ")
+
+        root.addWidget(tabs)
+        self._apply_style()
+
+    # ── Map tab (existing UI) ────────────────────────────────────────────
+    def _build_map_tab(self, parent):
+        layout = QVBoxLayout(parent)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
 
-        # ── Left: file list (top) + app list (bottom) ────────────────
         left = QFrame()
         left.setObjectName("leftPanel")
         ll = QVBoxLayout(left)
@@ -252,7 +317,6 @@ class CombinedWindow(QWidget):
 
         splitter.addWidget(left)
 
-        # ── Right: preview + buttons ─────────────────────────────────
         right = QFrame()
         right.setObjectName("rightPanel")
         rl = QVBoxLayout(right)
@@ -309,14 +373,275 @@ class CombinedWindow(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([420, 340])
 
-        root.addWidget(splitter, stretch=1)
+        layout.addWidget(splitter)
 
         if self.file_list.count() > 0:
             self.file_list.setCurrentRow(0)
-
         self.file_search.setFocus()
-        self.setStyleSheet(build_stylesheet())
 
+    # ── Settings tab ─────────────────────────────────────────────────────
+    def _build_settings_tab(self, parent):
+        layout = QVBoxLayout(parent)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
+
+        sec = QLabel("APPEARANCE")
+        sec.setObjectName("settingsSection")
+        layout.addWidget(sec)
+
+        card = QFrame()
+        card.setObjectName("settingsCard")
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(16, 16, 16, 16)
+        cl.setSpacing(12)
+
+        tl = QLabel("Theme")
+        tl.setObjectName("settingsLabel")
+        cl.addWidget(tl)
+
+        tr = QHBoxLayout()
+        tr.setSpacing(16)
+        self.theme_group = QButtonGroup(self)
+        self.theme_system = QRadioButton("System")
+        self.theme_light = QRadioButton("Light")
+        self.theme_dark = QRadioButton("Dark")
+        self.theme_group.addButton(self.theme_system, 0)
+        self.theme_group.addButton(self.theme_light, 1)
+        self.theme_group.addButton(self.theme_dark, 2)
+        cur = self.settings.value("appearance/theme", "system", type=str)
+        {"light": self.theme_light, "dark": self.theme_dark}.get(cur, self.theme_system).setChecked(True)
+        self.theme_system.clicked.connect(lambda: self._on_theme("system"))
+        self.theme_light.clicked.connect(lambda: self._on_theme("light"))
+        self.theme_dark.clicked.connect(lambda: self._on_theme("dark"))
+        tr.addWidget(self.theme_system)
+        tr.addWidget(self.theme_light)
+        tr.addWidget(self.theme_dark)
+        tr.addStretch()
+        cl.addLayout(tr)
+
+        self.glass_check = QCheckBox("Enable Glass Effect")
+        self.glass_check.setChecked(self.settings.value("appearance/glass", True, type=bool))
+        self.glass_check.toggled.connect(self._on_glass)
+        cl.addWidget(self.glass_check)
+
+        glass_hint = QLabel("Experimental with light themes — disable for best experience in Light mode")
+        glass_hint.setObjectName("settingsHint")
+        cl.addWidget(glass_hint)
+
+        layout.addWidget(card)
+
+        sec2 = QLabel("BACKUPS")
+        sec2.setObjectName("settingsSection")
+        layout.addWidget(sec2)
+
+        card2 = QFrame()
+        card2.setObjectName("settingsCard")
+        c2l = QVBoxLayout(card2)
+        c2l.setContentsMargins(16, 16, 16, 16)
+        c2l.setSpacing(8)
+
+        self.backup_check = QCheckBox("Enable Automatic Backups")
+        self.backup_check.setChecked(self.settings.value("backups/enabled", False, type=bool))
+        self.backup_check.toggled.connect(lambda v: self.settings.setValue("backups/enabled", v))
+        c2l.addWidget(self.backup_check)
+
+        hint = QLabel("Copies original .desktop files to ~/.local/share/macosicons/backups/ before modification")
+        hint.setObjectName("settingsHint")
+        hint.setWordWrap(True)
+        c2l.addWidget(hint)
+
+        layout.addWidget(card2)
+
+        sec3 = QLabel("SOURCE FOLDER")
+        sec3.setObjectName("settingsSection")
+        layout.addWidget(sec3)
+
+        card3 = QFrame()
+        card3.setObjectName("settingsCard")
+        c3l = QHBoxLayout(card3)
+        c3l.setContentsMargins(16, 16, 16, 16)
+        c3l.setSpacing(8)
+
+        default_src = os.environ.get("DOWNLOADS_DIR", os.path.expanduser("~/Downloads"))
+        self.source_input = QLineEdit(self.settings.value("source/folder", default_src, type=str))
+        self.source_input.editingFinished.connect(self._on_source_change)
+        c3l.addWidget(self.source_input, stretch=1)
+
+        browse = QPushButton("Browse")
+        browse.setObjectName("smallBtn")
+        browse.clicked.connect(self._browse_source)
+        c3l.addWidget(browse)
+
+        layout.addWidget(card3)
+
+        sec3b = QLabel("RESTORE")
+        sec3b.setObjectName("settingsSection")
+        layout.addWidget(sec3b)
+
+        card3b = QFrame()
+        card3b.setObjectName("settingsCard")
+        c3bl = QHBoxLayout(card3b)
+        c3bl.setContentsMargins(16, 16, 16, 16)
+        c3bl.setSpacing(8)
+
+        restore_btn = QPushButton("Restore Backup")
+        restore_btn.setObjectName("smallBtn")
+        restore_btn.clicked.connect(self._restore_backup)
+        c3bl.addWidget(restore_btn)
+
+        self._restore_status = QLabel("")
+        self._restore_status.setObjectName("refreshStatus")
+        c3bl.addWidget(self._restore_status)
+        c3bl.addStretch()
+
+        layout.addWidget(card3b)
+
+        sec4 = QLabel("TROUBLESHOOTING")
+        sec4.setObjectName("settingsSection")
+        layout.addWidget(sec4)
+
+        card4 = QFrame()
+        card4.setObjectName("settingsCard")
+        c4l = QHBoxLayout(card4)
+        c4l.setContentsMargins(16, 16, 16, 16)
+        c4l.setSpacing(12)
+
+        refresh_btn = QPushButton("Force Icon Refresh")
+        refresh_btn.setObjectName("smallBtn")
+        refresh_btn.clicked.connect(self._force_refresh)
+        c4l.addWidget(refresh_btn)
+
+        self._refresh_status = QLabel("")
+        self._refresh_status.setObjectName("refreshStatus")
+        c4l.addWidget(self._refresh_status)
+        c4l.addStretch()
+
+        layout.addWidget(card4)
+        layout.addStretch()
+
+    # ── Settings callbacks ───────────────────────────────────────────────
+    def _on_theme(self, theme):
+        self.settings.setValue("appearance/theme", theme)
+        self._apply_style()
+        self.update()
+
+    def _on_glass(self, on):
+        self.settings.setValue("appearance/glass", on)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, on)
+        self._apply_style()
+        self.update()
+
+    def _browse_source(self):
+        d = QFileDialog.getExistingDirectory(self, "Select Source Folder", self.source_input.text())
+        if d:
+            self.source_input.setText(d)
+            self.settings.setValue("source/folder", d)
+            self._rescan_source()
+
+    def _on_source_change(self):
+        path = self.source_input.text()
+        self.settings.setValue("source/folder", path)
+        self._rescan_source()
+
+    def _rescan_source(self):
+        folder = self.source_input.text()
+        new_files = []
+        if os.path.isdir(folder):
+            for f in sorted(os.listdir(folder)):
+                if os.path.splitext(f)[1].lower() in ICON_EXTENSIONS:
+                    new_files.append(os.path.join(folder, f))
+        self.icon_files = new_files
+        self.file_list.clear()
+        for fp in self.icon_files:
+            item = QListWidgetItem(os.path.basename(fp))
+            item.setData(Qt.ItemDataRole.UserRole, fp)
+            ext = os.path.splitext(fp)[1].lower()
+            if ext == ".png":
+                pix = QPixmap(fp)
+                if not pix.isNull():
+                    item.setIcon(QIcon(pix.scaled(28, 28, Qt.AspectRatioMode.KeepAspectRatio,
+                                                   Qt.TransformationMode.SmoothTransformation)))
+            else:
+                ti = QIcon.fromTheme("image-x-generic")
+                if not ti.isNull():
+                    item.setIcon(QIcon(ti.pixmap(28, 28)))
+            self.file_list.addItem(item)
+        if self.file_list.count() > 0:
+            self.file_list.setCurrentRow(0)
+            self.preview_label.setText("Select an icon")
+            self.info_label.setText("")
+            self.meta_label.setText("")
+
+    def _restore_backup(self):
+        backup_dir = os.path.expanduser("~/.local/share/macosicons/backups")
+        if not os.path.isdir(backup_dir):
+            self._restore_status.setText("No backups found")
+            QTimer.singleShot(2000, lambda: self._restore_status.setText(""))
+            return
+        backups = sorted(
+            [f for f in os.listdir(backup_dir) if ".backup." in f],
+            key=lambda f: os.path.getmtime(os.path.join(backup_dir, f)),
+            reverse=True,
+        )
+        if not backups:
+            self._restore_status.setText("No backups found")
+            QTimer.singleShot(2000, lambda: self._restore_status.setText(""))
+            return
+        from PyQt6.QtWidgets import QInputDialog
+        choice, ok = QInputDialog.getItem(self, "Restore Backup", "Select backup to restore:", backups, 0, False)
+        if ok and choice:
+            src = os.path.join(backup_dir, choice)
+            desktop_name = choice.split(".backup.")[0]
+            dest_dir = os.path.expanduser("~/.local/share/applications")
+            dest = os.path.join(dest_dir, desktop_name)
+            try:
+                shutil.copy2(src, dest)
+                for cmd in (["kbuildsycoca6"], ["kbuildsycoca5"]):
+                    try:
+                        subprocess.run(cmd, capture_output=True, timeout=10)
+                        break
+                    except Exception:
+                        continue
+                self._restore_status.setText("Restored!")
+                QTimer.singleShot(2000, lambda: self._restore_status.setText(""))
+            except Exception as e:
+                self._restore_status.setText(f"Failed: {e}")
+                QTimer.singleShot(3000, lambda: self._restore_status.setText(""))
+
+    def _force_refresh(self):
+        cmds = [
+            ["kbuildsycoca6"],
+            ["kbuildsycoca5"],
+        ]
+        for cmd in cmds:
+            try:
+                subprocess.run(cmd, capture_output=True, timeout=10)
+                break
+            except Exception:
+                continue
+        for p in ("~/.icons", "~/.local/share/icons"):
+            ep = os.path.expanduser(p)
+            if os.path.isdir(ep):
+                try:
+                    subprocess.run(["gtk-update-icon-cache", "-f", "-t", ep], capture_output=True, timeout=10)
+                except Exception:
+                    pass
+        self._refresh_status.setText("Refreshed!")
+        QTimer.singleShot(2000, lambda: self._refresh_status.setText(""))
+
+    # ── Style ────────────────────────────────────────────────────────────
+    def _apply_style(self):
+        theme = self.settings.value("appearance/theme", "system", type=str)
+        glass = self.settings.value("appearance/glass", True, type=bool)
+        if theme == "dark":
+            dm = True
+        elif theme == "light":
+            dm = False
+        else:
+            dm = None
+        self.setStyleSheet(build_stylesheet(dark_mode=dm, glass_enabled=glass))
+
+    # ── Map tab callbacks ────────────────────────────────────────────────
     def _on_file_select(self, current, previous):
         if not current:
             return
@@ -360,28 +685,46 @@ class CombinedWindow(QWidget):
             self.selected_app = ai.text()
             self.close()
 
+    # ── Paint ────────────────────────────────────────────────────────────
     def paintEvent(self, event):
+        glass = self.settings.value("appearance/glass", True, type=bool)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
-        r = 20
-        path = QPainterPath()
-        path.addRoundedRect(0, 0, w, h, r, r)
-        p.setClipPath(path)
-        pal = self.palette()
-        wc = pal.color(pal.ColorRole.Window)
-        lum = 0.299 * wc.redF() + 0.587 * wc.greenF() + 0.114 * wc.blueF()
-        if lum < 0.5:
-            tint = QColor(0, 0, 0, 35)
-            spec_top = QColor(255, 255, 255, 10)
+
+        if not glass:
+            theme = self.settings.value("appearance/theme", "system", type=str)
+            if theme == "dark":
+                bg = QColor(28, 28, 30)
+            elif theme == "light":
+                bg = QColor(242, 242, 247)
+            else:
+                wc = QApplication.palette().color(QApplication.palette().ColorRole.Window)
+                lum = 0.299 * wc.redF() + 0.587 * wc.greenF() + 0.114 * wc.blueF()
+                bg = QColor(28, 28, 30) if lum < 0.5 else QColor(242, 242, 247)
+            p.fillRect(0, 0, w, h, bg)
         else:
-            tint = QColor(255, 255, 255, 50)
-            spec_top = QColor(255, 255, 255, 12)
-        p.fillRect(0, 0, w, h, tint)
-        spec = QLinearGradient(0, 0, 0, min(30, h // 4))
-        spec.setColorAt(0, spec_top)
-        spec.setColorAt(1, QColor(0, 0, 0, 0))
-        p.fillRect(0, 0, w, min(30, h // 4), spec)
+            theme = self.settings.value("appearance/theme", "system", type=str)
+            if theme == "dark":
+                dark = True
+            elif theme == "light":
+                dark = False
+            else:
+                wc = QApplication.palette().color(QApplication.palette().ColorRole.Window)
+                lum = 0.299 * wc.redF() + 0.587 * wc.greenF() + 0.114 * wc.blueF()
+                dark = lum < 0.5
+            if dark:
+                tint = QColor(0, 0, 0, 35)
+                spec_top = QColor(255, 255, 255, 10)
+            else:
+                tint = QColor(255, 255, 255, 30)
+                spec_top = QColor(255, 255, 255, 15)
+            p.fillRect(0, 0, w, h, tint)
+            spec = QLinearGradient(0, 0, 0, min(30, h // 4))
+            spec.setColorAt(0, spec_top)
+            spec.setColorAt(1, QColor(0, 0, 0, 0))
+            p.fillRect(0, 0, w, min(30, h // 4), spec)
+
         p.end()
 
     def closeEvent(self, event):
@@ -390,12 +733,18 @@ class CombinedWindow(QWidget):
         super().closeEvent(event)
 
 
-# ── Scan + run ─────────────────────────────────────────────────────────
+# ── Scan + run ───────────────────────────────────────────────────────────
+app = QApplication([])
+
+settings = QSettings("macOSicons", "macOSicons")
+source_folder = settings.value("source/folder",
+    os.environ.get("DOWNLOADS_DIR", os.path.expanduser("~/Downloads")), type=str)
+
 icon_files = []
-if os.path.isdir(DOWNLOADS):
-    for f in sorted(os.listdir(DOWNLOADS)):
+if os.path.isdir(source_folder):
+    for f in sorted(os.listdir(source_folder)):
         if os.path.splitext(f)[1].lower() in ICON_EXTENSIONS:
-            icon_files.append(os.path.join(DOWNLOADS, f))
+            icon_files.append(os.path.join(source_folder, f))
 
 app_data = []
 for dp in DESKTOP_LIST_RAW:
@@ -406,8 +755,6 @@ for dp in DESKTOP_LIST_RAW:
 if not icon_files:
     sys.exit(1)
 
-# Make sure there are absolutely NO spaces before these lines:
-app = QApplication([])
 app.setDesktopFileName("macosicons-gui")
 win = CombinedWindow(icon_files, app_data)
 win.show()
@@ -416,6 +763,7 @@ app.exec()
 if win.selected_file and win.selected_app:
     print(win.selected_file)
     print(win.selected_app)
+    print("BACKUP=1" if settings.value("backups/enabled", False, type=bool) else "BACKUP=0")
 else:
     sys.exit(1)
 PYEOF
@@ -429,6 +777,7 @@ fi
 
 SELECTED_ICON_PATH=$(echo "$RESULT" | sed -n '1p')
 SELECTED_APP=$(echo "$RESULT" | sed -n '2p')
+BACKUP_ENABLED=$(echo "$RESULT" | sed -n '3p' | cut -d= -f2)
 
 if [ -z "$SELECTED_ICON_PATH" ] || [ -z "$SELECTED_APP" ]; then
     echo "Cancelled."
@@ -476,14 +825,6 @@ case "$FILE_EXT" in
             exit 1
         fi
         ;;
-    ico)
-        magick "$WORK_DIR/source_file[-1]" -fuzz 10% -trim +repage -resize 512x512 -background none -gravity center -extent 512x512 "$PNG_OUTPUT" 2>/dev/null
-        if [ ! -f "$PNG_OUTPUT" ]; then
-            kdialog --title "Error" --error "Could not extract a valid PNG from this .ico file."
-            safe_cleanup "$WORK_DIR"
-            exit 1
-        fi
-        ;;
     png)
         magick "$WORK_DIR/source_file" -fuzz 10% -trim +repage -resize 512x512 -background none -gravity center -extent 512x512 "$PNG_OUTPUT" 2>/dev/null
         if [ ! -f "$PNG_OUTPUT" ]; then
@@ -505,6 +846,16 @@ safe_cleanup "$WORK_DIR"
 APP_PATH=$(find /usr/share/applications $HOME/.local/share/applications -name "$SELECTED_APP" | head -n 1)
 USER_APP_DIR="$HOME/.local/share/applications"
 mkdir -p "$USER_APP_DIR"
+
+# Backup if enabled
+if [ "$BACKUP_ENABLED" = "1" ]; then
+    BACKUP_DIR="$HOME/.local/share/macosicons/backups"
+    mkdir -p "$BACKUP_DIR"
+    if [ -f "$APP_PATH" ]; then
+        cp "$APP_PATH" "$BACKUP_DIR/$(basename "$SELECTED_APP").backup.$(date +%Y%m%d%H%M%S)"
+    fi
+fi
+
 cp "$APP_PATH" "$USER_APP_DIR/$SELECTED_APP"
 
 sed -i "s|^Icon=.*|Icon=$PNG_OUTPUT|" "$USER_APP_DIR/$SELECTED_APP"
